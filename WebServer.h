@@ -7,12 +7,19 @@ using namespace std;
 #include <winsock2.h>
 #include <string.h>
 #include <time.h>
+#include <sys/stat.h>
+
 #define TIME_PORT 27015
 #define TRUE 1
 #define FALSE 0
 typedef int Bool;
 
+#define EN "en\\"
+#define HE "he\\"
+#define LANG_QUERY "?lang=he"
+
 #define MY_WEB		"mywebsite.html"
+#define DELETE_HTML "en\\delete.html"
 #define BUF_SIZE	8000
 #define CRLF		"\r\n"
 
@@ -91,6 +98,7 @@ void initSockCollection(SocketCollection* sockList);
 void AddSocketsToRecvSet(fd_set* waitRecv, SocketCollection* sockets);
 void AddSocketsToSendSet(fd_set* waitSend, SocketCollection* sockets);
 void RecvStatusOperation(fd_set* waitSend, SocketCollection* sockets, int* nfd);
+void TimeoutOperation(SocketCollection* sockets);
 void SendStatusOperation(fd_set* waitSend, SocketCollection* sockets, int* nfd);
 void ClosingSocket(SOCKET* listenSocket);
 
@@ -115,6 +123,7 @@ char* createAndGetHeader(int contentLength, eClientRequest typeOfRequest);
 void getTime(const char* iSendBuff);
 void handleGetAndHeadRequests(char* sendBuff, SocketState* socket, eClientRequest typeOfRequest);
 char* getQueryFromUrl(char* msgBuff);
+void addDirToBeginOfStr(char* destStr, char* prefix);
 Bool isFileExists(char* fileName);
 void makeHeader(char* header, char* currentDate, char* contentLengthStr, eClientRequest typeOfRequest);
 const char* getAfterSpecificStrLocation(char* msgBuff, char* delimiter);
