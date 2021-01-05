@@ -79,19 +79,26 @@ void RecvStatusOperation(fd_set* waitRecv, SocketCollection* sockets, int* nfd)
 	}
 }
 
-void SendStatusOperation(fd_set* waitSend, SocketCollection* sockets, int* nfd)
+void TimeoutOperation(SocketCollection* sockets)
 {
-	int i;
-	time_t currentTime;;
-	for (i = 0; i < MAX_SOCKETS; i++)
+	time_t currentTime;
+
+	for (int i = 0; i < MAX_SOCKETS; i++)
 	{
 		if (sockets->sockets[i].sendStatus == IDLE)
 		{
 			currentTime = time(0);
-			if (currentTime - sockets->sockets[i].lastActivityTimer > 180)
+			if (currentTime - sockets->sockets[i].lastActivityTimer > 180 && sockets->sockets[i].lastActivityTimer != 0) {
 				removeSocket(i, sockets);
+				cout << "\nFinished connection with client number " << i << endl;
+			}
 		}
 	}
+}
+
+void SendStatusOperation(fd_set* waitSend, SocketCollection* sockets, int* nfd)
+{
+	int i;
 
 	for (i = 0; i < MAX_SOCKETS && (*nfd) > 0; i++)
 	{
@@ -184,6 +191,7 @@ void updateSocket(int index, SocketCollection* sockets, int send, int msg, int b
 	sockets->sockets[index].msgType = msg;
 	memcpy(sockets->sockets[index].msgBuffer, &sockets->sockets[index].msgBuffer[bufferLen], sockets->sockets[index].lenOfMsg - bufferLen);
 	sockets->sockets[index].lenOfMsg -= bufferLen;
+	sockets->sockets[index].msgBuffer[sockets->sockets[index].lenOfMsg] = '\0';
 }
 
 void receiveMessage(int index, SocketCollection* sockets)
@@ -285,10 +293,10 @@ void handleClientRequest(char* sendBuff, SocketState* socket)
 	switch (requestType)
 	{
 	case GET:
-		handleGetRequest(sendBuff, socket);		// DONE
+		handleGetRequest(sendBuff, socket);
 		break;
 	case HEAD:
-		handleHeadRequest(sendBuff, socket);	// DONE	
+		handleHeadRequest(sendBuff, socket);
 		break;
 	case PUT:
 		handlePutRequest(sendBuff, socket);
@@ -323,40 +331,43 @@ void handleHeadRequest(char* sendBuff, SocketState* socket)
 void handlePutRequest(char* sendBuff, SocketState* socket)
 {
 	char fileFromUrl[STANDART_LEN];
-	strcpy(fileFromUrl, getQueryFromUrl(socket->msgBuffer));
 	char statusCode[STANDART_LEN], responseBody[MAX_STR_LEN] = "";
-
+	strcpy(fileFromUrl, getQueryFromUrl(socket->msgBuffer));
+	
 	if (isFileExists(fileFromUrl))
 	{
+		strcpy(responseBody, "File Updated!");
 		strcpy(statusCode, NO_CONTENT);
 		strcat(statusCode, CRLF);
 	}
 	else
 	{
-		FILE* file = fopen(fileFromUrl, "w+");
-		char fileBody[BUF_SIZE] = "";
-		char delimiter[10];
-
-		strcpy(delimiter, makeCRLFDelimiter());
-		strcpy(fileBody, getAfterSpecificStrLocation(socket->msgBuffer, delimiter));
-		fputs(fileBody, file);
-
+		strcpy(responseBody, "File Created!");
 		strcpy(statusCode, CREATED);
 		strcat(statusCode, CRLF);
-		fclose(file);
 	}
 
+	//Idempotent
+	FILE* file = fopen(fileFromUrl, "w");
+	char fileBody[BUF_SIZE] = "";
+	char delimiter[10];
+
+	strcpy(delimiter, makeCRLFDelimiter());
+	strcpy(fileBody, getAfterSpecificStrLocation(socket->msgBuffer, delimiter));
+	fprintf(file, fileBody);
 	strcat(sendBuff, statusCode);
 	strcat(sendBuff, "Content-Location: ");
 	strcat(sendBuff, strcat(fileFromUrl, CRLF));
-	strcat(sendBuff, createAndGetHeader(NO_RESPONSE_BODY, PUT));
+	strcat(sendBuff, createAndGetHeader(strlen(responseBody), PUT));
+	strcat(sendBuff, responseBody);
+	fclose(file);
 }
 
 void handleDeleteRequest(char* sendBuff, SocketState* socket)
 {
 	char fileFromUrl[STANDART_LEN];
-	strcpy(fileFromUrl, getQueryFromUrl(socket->msgBuffer));
 	char statusCode[STANDART_LEN], responseBody[MAX_STR_LEN] = "";
+	strcpy(fileFromUrl, getQueryFromUrl(socket->msgBuffer));
 
 	if (!isFileExists(fileFromUrl))
 	{
@@ -369,7 +380,7 @@ void handleDeleteRequest(char* sendBuff, SocketState* socket)
 		// Delete specific .html file from dir.
 		remove(fileFromUrl);
 		// Prepare body delete (response) message.
-		FILE* file = fopen("delete.html", "r");
+		FILE* file = fopen(DELETE_HTML, "r");
 		char line[100];
 
 		while (fgets(line, 100, file) != 0)
@@ -402,33 +413,39 @@ void handleOptionsRequest(char* sendBuff, SocketState* socket)
 void handlePostRequest(char* sendBuff, SocketState* socket)
 {
 	char fileFromUrl[STANDART_LEN];
-	strcpy(fileFromUrl, getQueryFromUrl(socket->msgBuffer));
 	char statusCode[STANDART_LEN], responseBody[MAX_STR_LEN] = "";
+	strcpy(fileFromUrl, getQueryFromUrl(socket->msgBuffer));
 
-	if (!isFileExists(fileFromUrl))
+	if (isFileExists(fileFromUrl))
 	{
+		strcpy(responseBody, "File Appended!");
 		strcpy(statusCode, NO_CONTENT);
 		strcat(statusCode, CRLF);
 	}
 	else
 	{
-		FILE* file = fopen(fileFromUrl, "a");
-		char fileBody[BUF_SIZE] = "";
-		char delimiter[10];
-
-		strcpy(delimiter, makeCRLFDelimiter());
-		strcpy(fileBody, getAfterSpecificStrLocation(socket->msgBuffer, delimiter));
-		fputs(fileBody, file);
-
+		strcpy(responseBody, "File Created!");
 		strcpy(statusCode, OK_STATUS);
 		strcat(statusCode, CRLF);
-		fclose(file);
 	}
 
+	//Not idempotent
+	FILE* file = fopen(fileFromUrl, "a");
+	char fileBody[BUF_SIZE] = "";
+	char delimiter[10];
+
+	strcpy(delimiter, makeCRLFDelimiter());
+	strcpy(fileBody, getAfterSpecificStrLocation(socket->msgBuffer, delimiter));
+	fputs(fileBody, file);
+
+	//Printing the post message body to terminal 
+	cout << "\n---Printing post request message body---:\n" << fileBody << endl << endl;
 	strcat(sendBuff, statusCode);
 	strcat(sendBuff, "Content-Location: ");
 	strcat(sendBuff, strcat(fileFromUrl, CRLF));
-	strcat(sendBuff, createAndGetHeader(NO_RESPONSE_BODY, POST));
+	strcat(sendBuff, createAndGetHeader(strlen(responseBody), POST));
+	strcat(sendBuff, responseBody);
+	fclose(file);
 }
 
 char* createAndGetHeader(int contentLength, eClientRequest typeOfRequest)
@@ -436,6 +453,7 @@ char* createAndGetHeader(int contentLength, eClientRequest typeOfRequest)
 	char header[MAX_STR_LEN] = "";
 	char currentDate[STANDART_LEN];
 	char contentLengthStr[STANDART_LEN];
+
 	getTime(currentDate);
 	_itoa(contentLength, contentLengthStr, 10);
 	makeHeader(header, currentDate, contentLengthStr, typeOfRequest);
@@ -447,9 +465,9 @@ char* createAndGetHeader(int contentLength, eClientRequest typeOfRequest)
 void handleGetAndHeadRequests(char* sendBuff, SocketState* socket, eClientRequest typeOfRequest)
 {
 	char fileFromUrl[STANDART_LEN];
-	strcpy(fileFromUrl, getQueryFromUrl(socket->msgBuffer));
 	char statusCode[STANDART_LEN], responseBody[MAX_STR_LEN] = "";
 
+	strcpy(fileFromUrl, getQueryFromUrl(socket->msgBuffer));
 	if (!isFileExists(fileFromUrl))
 	{
 		strcpy(statusCode, NOT_FOUND);
@@ -485,18 +503,44 @@ void handleGetAndHeadRequests(char* sendBuff, SocketState* socket, eClientReques
 char* getQueryFromUrl(char* msgBuff)
 {
 	msgBuff += 2;
+	char htmlFileName[STANDART_LEN] = "";
 	char resultOfQuery[STANDART_LEN] = "";
 
-	for (int i = 0; i < strlen(msgBuff); i++)
+	int i = 0;
+	int j = 0;
+
+	while (msgBuff[j] != ' ')
 	{
-		if (msgBuff[i] != ' ')
-			resultOfQuery[i] = msgBuff[i];
-		else
+		htmlFileName[j] = msgBuff[j];
+		j++;
+		if (msgBuff[j] == '/')
+		{
+			j++;
 			break;
+		}
 	}
 
-	strcat(resultOfQuery, ".html");
-	return resultOfQuery;
+	while (msgBuff[j] != ' ')
+	{
+		resultOfQuery[i] = msgBuff[j];
+		i++;
+		j++;
+	}
+
+	if (strcmp(resultOfQuery, LANG_QUERY) == 0)
+		addDirToBeginOfStr((char*)htmlFileName, (char*)HE);
+	else
+		addDirToBeginOfStr((char*)htmlFileName, (char*)EN);
+	strcat(htmlFileName, ".html");
+	return htmlFileName;
+}
+
+void addDirToBeginOfStr(char* destStr, char* prefix)
+{
+	char temp[STANDART_LEN] = "";
+	strcpy(temp, destStr);
+	strcpy(destStr, prefix);
+	strcat(destStr, temp);
 }
 
 Bool isFileExists(char* fileName)
@@ -525,14 +569,14 @@ void makeHeader(char* header, char* currentDate, char* contentLengthStr, eClient
 	if (typeOfRequest == OPTIONS)
 		strcat(header, "Allowed: GET, HEAD, PUT, DELETE, TRACE, OPTIONS, POST\r\n");
 
-	strcat(header, "Server: Lior's and Erez's server:)\r\n");
+	strcat(header, "Server: Lior and Erez server:)\r\n");
 	strcat(header, "Content-Length: ");
 	strcat(header, strcat(contentLengthStr, CRLF));
 
 	if (typeOfRequest != TRACE)
-		strcat(header, "Content-type: text/html");
+		strcat(header, "Content-Type: text/html");
 	else
-		strcat(header, "Content-type: message/http");
+		strcat(header, "Content-Type: message/http");
 
 	strcat(header, CRLF);
 	strcat(header, CRLF);
