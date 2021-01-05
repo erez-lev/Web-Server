@@ -42,6 +42,7 @@ void main()
 		CheckSocketFunctionError(nfd, &listenSocket);
 
 		RecvStatusOperation(&waitRecv, &sockList, &nfd);
+		TimeoutOperation(&sockList);
 		SendStatusOperation(&waitSend, &sockList, &nfd);
 	}
 
